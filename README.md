@@ -1,4 +1,4 @@
-# Product Prioritization and Google Merchant Integration Script
+# Product Prioritisation and Google Merchant Integration Script
 
 This script evaluates each product's individual priority which produces a supplementary feed to import priorities into the Google PMax / Shopping campaigns. The script helps by bucketing products into three evenly sized groups, each group worth an equal amount of stock valuation. It uses product attributes to assess historical performance, and determines if the product has a high, medium or low gross profit valuation based on the the bucket it is. It then assigns a priority score to each product. 
 
