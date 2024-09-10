@@ -1,5 +1,5 @@
 const MERCHANT_ID = ''; //INSERT Merchant ID here
-var spreadsheetUrl = '';
+var spreadsheetUrl = ''; //INSERT GOOGLE SHEET URL
 var spreadsheet = SpreadsheetApp.openByUrl(spreadsheetUrl);
 let sheet = spreadsheet.getSheetByName('gp');
 let underlyingDataSheet = spreadsheet.getSheetByName('underlyingData');
