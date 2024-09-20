@@ -1,240 +1,285 @@
-const MERCHANT_ID = ''; //INSERT Merchant ID here
-var spreadsheetUrl = ''; //INSERT GOOGLE SHEET URL
+const MERCHANT_ID = ; //ENTER MERCHANT ID Here
+
+var spreadsheetUrl = ''; //ENTER SPREADSHEET URL HERE
 var spreadsheet = SpreadsheetApp.openByUrl(spreadsheetUrl);
-let sheet = spreadsheet.getSheetByName('gp');
+let sheet = spreadsheet.getSheetByName('gp'); 
 let underlyingDataSheet = spreadsheet.getSheetByName('underlyingData');
-let bucketSheet = spreadsheet.getSheetByName('Sheet3');
+
+// Script starts below - don't edit below this line ----------------------------------
 
 const sheetRows = [];
-var dataRows = [];
-var lowerThird = [];
-var middleThird = [];
-var upperThird = [];
-var buckets = {};
-var productArray = [];
+const dataRows = []; 
+const productsArray = [];
 var totalStockValuation = 0;
 
+function main(){
+  generateProducts();
+  addBenchmarkPriceData();
+  addValuationBucketData(productsArray);
+  scoreProducts();
+  setupSpreadsheet();
+  populateSpreadsheet();
+  populateUnderlyingData();
 
-function main() {
-    processMarginData();
-    setupSpreadsheet();
-    productList();
-    populateSpreadsheet();
-    populateUnderlyingData();
 }
 
-function productList() {
-    const merchantId = MERCHANT_ID;
-    let pageToken;
-    let pageNum = 1;
-    const maxResults = 250;
-    try {
-        do {
-            const products = ShoppingContent.Products.list(merchantId, {
-                pageToken: pageToken, maxResults: maxResults
-            });
-            console.log('Page ' + pageNum);
-            if (products.resources) {
-                for (let i = 0; i < products.resources.length; i++) {
-                    const product = products.resources[i];
-                    //No COGS means Local Product Inventory Item     
-                    if (product.costOfGoodsSold !== undefined) {
-                        const stockLevel = product.customLabel2;
-                        const weightedMargin = getWeightedProfitMargin(product);
-                        const index = product.customLabel4;
-                        var finalRating;
-                        var indexScore = getIndexScore(index);
-                        var marginScore = findBucket(buckets, product);
-                        var productPrioScore = marginScore + indexScore;
+function generateProducts() {
+  const merchantId = MERCHANT_ID; 
+  let pageToken;
+  let pageNum = 1;
+  const maxResults = 250;
+  try {
+    do {
+      const productsReport = ShoppingContent.Products.list(merchantId, {
+        pageToken: pageToken,
+        maxResults: maxResults
+      });
 
-                        if (productPrioScore >= 5) {
-                            finalRating = 'high'
-                        } else if (productPrioScore == 4) {
-                            finalRating = 'mid'
-                        } else if (productPrioScore <= 3) {
-                            finalRating = 'low'
-                        }
-                        dataRows.push([product.offerId, weightedMargin, stockLevel, index]);
-                        sheetRows.push([product.offerId, finalRating]);
-                    }
-                }
-            } else {
-                console.log('No more products in account ' + merchantId);
-            }
-            pageToken = products.nextPageToken;
-            pageNum++;
-        } while (pageToken);
+      if (productsReport.resources) {
+        var product = {};
+        for (let i = 0; i < productsReport.resources.length; i++) {
+          const reportProduct = productsReport.resources[i];
+          //No COGS means Local Product Inventory Item, ie skip
+           if (reportProduct.costOfGoodsSold !== undefined){
+            const productValuation = getWeightedProfitMargin(reportProduct);
+            totalStockValuation += productValuation;
 
-    } catch (e) { console.log('Failed with error: $s', e); }
-}
-
-function getIndexScore(index) {
-    var indexScore = 1; switch (index) {
-        case 'over-index': indexScore = 3; break;
-        case 'index': indexScore = 3; break;
-        case 'near-index': indexScore = 3; break;
-        case 'under-index': indexScore = 2; break;
-        case 'no-index': indexScore = 1; break;
-    }
-    return indexScore;
-}
-
-function setupSpreadsheet() {
-    try {
-        var range = sheet.getDataRange();
-        range.clearContent();
-        var header = ['id', 'custom label 3'];
-        sheet.appendRow(header);
-    } catch (e) {
-        sheet.deleteColumns(10, 5000);
-    }
-}
-
-function populateSpreadsheet() {
-    if (sheetRows.length > 0) {
-        sheet.getRange(sheet.getLastRow() + 1, 1, sheetRows.length, 2).setValues(sheetRows);
-    } else console.log('No data to push to sheet. Check data API request');
-}
-
-function populateUnderlyingData() {
-    underlyingDataSheet.clearContents();
-    underlyingDataSheet.appendRow(['id', 'margin', 'stock', 'index']);
-    underlyingDataSheet.getRange(underlyingDataSheet.getLastRow() + 1, 1, dataRows.length, 4).setValues(dataRows);
-}
-
-function processMarginData() {
-    const merchantId = MERCHANT_ID;
-    let pageToken;
-    let pageNum = 1;
-    const maxResults = 250;
-    try {
-        do {
-            const products = ShoppingContent.Products.list(merchantId, {
-                pageToken: pageToken, maxResults: maxResults
-            });
-            console.log('Page ' + pageNum);
-            if (products.resources) {
-                for (let i = 0; i < products.resources.length; i++) {
-                    const product = products.resources[i];
-                    if (product.costOfGoodsSold !== undefined) {
-                        productArray.push(product);
-                        totalStockValuation += getWeightedProfitMargin(product);
-                    }
-                }
-            } else {
-                console.log('No more products in account ' + merchantId);
-            }
-            pageToken = products.nextPageToken;
-            pageNum++;
-        } while (pageToken);
-
-        buckets = createMarginBuckets(productArray);
-    } catch (e) {
-        console.log(`preprocess marginData has an error: ${e}`);
-    }
-}
-
-function createMarginBuckets(products) {
-
-    products.sort((a, b) => {
-        if (a.channel == 'online' && b.channel == 'online') {
-            const weightedProfitMarginA = getWeightedProfitMargin(a);
-            const weightedProfitMarginB = getWeightedProfitMargin(b);
-            return weightedProfitMarginA - weightedProfitMarginB;
-        } else {
-            console.log(`Unexpected channel for sorting: A = ${a.channel}, B = ${b.channel}`);
-            return 0;
+            product.offerId = reportProduct.offerId;
+            product.price = getPrice(reportProduct);
+            product.index = reportProduct.customLabel4;
+            product.stockValuation = productValuation;
+            productsArray.push(product);
+            product = {};
+           }
         }
-    });
+      } else {
+        console.log('No more products in account ' + merchantId);
+      }
+      pageToken = productsReport.nextPageToken;
+      pageNum++;
+    } while (pageToken); 
+  } catch (e) {
+    console.log('Failed with error: $s', e);
+  }
+}
 
-    const targetBucketValue = totalStockValuation / 3;
-    const buckets_test = { low: [], mid: [], high: [] };
+function scoreProducts() {
+
+  for (product of productsArray) {
+
+    var finalRating;
+    var indexScore;
+    var valuationScore;
+    var benchmarkPriceScore;
+
+    indexScore = getIndexScore(product);
+
+    valuationScore = getValuationScore(product);
+
+    benchmarkPriceScore = getBenchmarkPriceScore(product); 
+
+    var productPrioScore = valuationScore + indexScore + benchmarkPriceScore;
+
+    if (productPrioScore >= 7) {
+      finalRating = 'high';
+
+    } else if (productPrioScore >= 6) {
+      finalRating = 'mid';
 
 
-    let currentBucket = 'low';
-    let currentBucketValue = 0;
+    } else {
+      finalRating = 'low';
 
-    for (let product of products) {
-        const weightedStockValue = getWeightedProfitMargin(product);
-        buckets_test[currentBucket].push(product);
-        currentBucketValue += weightedStockValue;
-        if (currentBucketValue >= targetBucketValue) {
-            if (currentBucket === 'low') {
+    }
+    
+    
 
-                currentBucket = 'mid'
+    dataRows.push([product.offerId, product.stockValuation, product.valuationBucket, product.index, product.benchmarkPrice, product.price]);
+    sheetRows.push([product.offerId, finalRating, valuationScore, indexScore, benchmarkPriceScore]);
 
-            } else if (currentBucket === 'mid') {
+  }
+  
+}
 
-                currentBucket = 'high'
-            } currentBucketValue = 0;
+function getBenchmarkPriceScore(product) {
+  if (product.benchmarkPrice === undefined) {
+    return 2;
+
+  } else if (product.price <= product.benchmarkPrice) {
+    return 3;
+
+  } else if (product.price > (product.benchmarkPrice * 1.05)) {
+    return 1;
+
+  } else return 2;
+
+}
+
+function getValuationScore(product) {
+  if (product.valuationBucket === "high") {
+    return 3;
+
+  } else if (product.valuationBucket === "mid") {
+    return 2;
+
+  } else return 1;
+}
+
+function getIndexScore(product){
+  
+  var indexScore = 1;
+  
+     switch (product.index) {
+
+       case 'over-index':
+         indexScore = 3;
+         break;
+
+       case 'index':
+         indexScore = 3;
+         break;
+
+       case 'near-index':
+         indexScore = 3;
+         break;
+
+       case 'under-index':
+         indexScore = 2;
+         break;
+
+       case 'no-index':
+         indexScore = 1;
+         break;
+     }
+
+  return indexScore;
+  
+}
+
+function setupSpreadsheet(){
+  
+  try {
+    var range = sheet.getDataRange();
+    range.clearContent();
+    var header = ['id', 'custom label 3', 'margin score', 'index score', 'price comp score'];
+    sheet.appendRow(header);
+  } catch (e) {
+    sheet.deleteColumns(10, 5000);
+  }
+  
+}
+
+function populateSpreadsheet(){
+  if (sheetRows.length > 0) {
+      sheet.getRange(sheet.getLastRow() + 1, 1, sheetRows.length, 5).setValues(sheetRows);
+  } else console.log('No data to push to sheet. Check data API request');
+}
+
+function populateUnderlyingData(){
+  underlyingDataSheet.clearContents();
+  underlyingDataSheet.appendRow(['id','valuation','val bucket','index', 'benchmark price', 'sale price']);
+  underlyingDataSheet.getRange(underlyingDataSheet.getLastRow() + 1, 1, dataRows.length, 6).setValues(dataRows);  
+}
+
+
+
+function addValuationBucketData(products){
+  
+  products.sort((a, b) => {     
+    return a.stockValuation - b.stockValuation;
+  });
+
+
+  const targetBucketValue = totalStockValuation / 3;
+  let currentBucket = 'low'
+  let currentBucketValue = 0;
+
+  for (let product of products) {
+      product.valuationBucket = currentBucket;
+      currentBucketValue += product.stockValuation;
+        
+      
+      if (currentBucketValue >= targetBucketValue){
+        if (currentBucket === 'low'){
+          currentBucket = 'mid'
+        } else if (currentBucket === 'mid'){
+          currentBucket = 'high'
         }
-    }
-    logBuckets(buckets_test['low'], buckets_test['mid'], buckets_test['high']); 
-    return buckets_test;
-}
-function findBucket(buckets, product) {
-    try {
-        if (buckets['low'].some(p => p.offerId === product.offerId)) {
-            //low          
-            return 1;
-        } else if (buckets['mid'].some(p => p.offerId === product.offerId)) {
-            //mid         
-            return 2;
-        } else if (buckets['high'].some(p => p.offerId === product.offerId)) {
-            //high
-            return 3;
-        } else {
-            return 1;
-        }
-    } catch (e) {
-        console.log(`findBucket error ${e}`);
-    }
+        currentBucketValue = 0;
+      } 
+  }
+}                               
 
+function getWeightedProfitMargin(product){
+  if (product.costOfGoodsSold !== undefined){
+    const margin = getPrice(product) - Number(product.costOfGoodsSold.value);
+    const qty = getStockQty(product);
+
+    return margin * qty
+  }
 }
 
-
-function getWeightedProfitMargin(product) {
-    if (product.costOfGoodsSold !== undefined) {
-        const margin = getPrice(product) - Number(product.costOfGoodsSold.value);
-        const qty = getStockQty(product);
-        return margin * qty
-    }
+function getPrice(product){ 
+  const price = product.salePrice ? Number(product.salePrice.value) : Number(product.price.value);
+  if (price === 0) {
+    console.log(`Price is 0 for product ${product.offerId}`);
+    return 1;
+  }
+  
+  return price;
 }
 
-function getPrice(product) {
-    const price = product.salePrice ? Number(product.salePrice.value) : Number(product.price.value);
-    if (price === 0) {
-        console.log(`Price is 0 for product ${product.offerId}`);
-        return 1;
-    } return price;
-}
 
 function getStockQty(product) {
-    if (product.sellOnGoogleQuantity === undefined) {
-        //console.log(`Product ${product.offerId} has no quantity sold on Google defined`)  
-        return 1;
-    } if (Number(product.sellOnGoogleQuantity) === 0) {
-        //console.log(`Product ${product.offerId} has 0 quantity sold - Assumes a nominal value of 1`)  
-        return 1;
-    } 
-    return Number(product.sellOnGoogleQuantity);
+  if (product.sellOnGoogleQuantity === undefined) {
+    //console.log(`Product ${product.offerId} has no quantity sold on Google defined`)
+    return 1;
+  }
+  if (Number(product.sellOnGoogleQuantity) === 0){
+    //console.log(`Product ${product.offerId} has 0 quantity sold - Assumes a nominal value of 1`)
+    return 1;
+  }
+  return Number(product.sellOnGoogleQuantity)
 }
 
+function addBenchmarkPriceData(){
+  let pageToken;
+   
+  do {
+    
+    const report = ShoppingContent.Reports.search({
+        "query": `SELECT 
+                      product_view.id, 
+                      product_view.offer_id, 
+                      product_view.price_micros, 
+                      price_competitiveness.country_code, 
+                      price_competitiveness.benchmark_price_micros,
+                      price_competitiveness.benchmark_price_currency_code 
+                  FROM PriceCompetitivenessProductView`,
+      
+        "pageToken": pageToken 
+      }
+    , MERCHANT_ID);
+    
+    
+    if (report.results){   
+      for (var i = 0; i < report.results.length; i++){
+        const row = report.results[i];
 
-function logBuckets(lowMargin, midMargin, highMargin) {
-    console.log(`Low Margin Bucket (${lowMargin.length} items):`);
+        for (const product of productsArray) {
 
-    lowMargin.forEach(product => { 
-        console.log(`Product ID: ${product.offerId}, Weighted Margin: ${getWeightedProfitMargin(product)}`); 
-    });
+          if (product.offerId === row["productView"]["offerId"]){
+            const benchmarkPrice = Number(row["priceCompetitiveness"]["benchmarkPriceMicros"]) / 1000000;
+            product["benchmarkPrice"] = benchmarkPrice;
 
-    console.log(`Mid Margin Bucket (${midMargin.length} items):`);
-    midMargin.forEach(product => { 
-        console.log(`Product ID: ${product.offerId}, Weighted Margin: ${getWeightedProfitMargin(product)}`); 
-    });
-
-    console.log(`High Margin Bucket (${highMargin.length} items):`);
-    highMargin.forEach(product => { 
-        console.log(`Product ID: ${product.offerId}, Weighted Margin: ${getWeightedProfitMargin(product)}`); 
-    });
+            
+          } 
+        }
+      }
+      
+      pageToken = report.nextPageToken;
+    }   
+    console.log(report.results.length);
+    
+  } while(pageToken); 
 }
